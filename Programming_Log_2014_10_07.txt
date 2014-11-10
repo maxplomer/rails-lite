@@ -1,0 +1,268 @@
+Todays Topics: building a lite rails package, basically its great to use rails and stay high level, but since we now know how to use rails its good to see how the gears turn behind the sleek rails exterior
+
+Here is my programming log from today 2014-10-07:
+
+    start webserver
+
+    $ ruby p01_basic_server.rb
+
+
+    $ git commit -m "go to localhost:3000 and see helloworld"
+    $ git checkout -b Phase-1-WEBrick
+
+
+    -  in phase 2 we created functions for redirecting and rendering content
+
+
+    def redirect_to(url)
+      raise "double render error" if already_built_response?
+
+      @res.status = 302
+      @res["Location"] = url
+
+      @already_built_response = true
+
+      nil
+    end
+
+    -  In our redirect method we are building a response (@res) to a client request to GET a specific page
+
+    -  sending status code 302 is a common way of performing URL redirection
+
+    -  @res acts like a hash in that in the key “Location” we put the location url that we want to redirect to
+
+
+
+    $ git commit -m "done with phase 2”
+
+    TOPIC:  ERB and binding
+
+
+    -  Analyzing example code on 
+    http://ruby-doc.org/stdlib-1.9.3/libdoc/erb/rdoc/ERB.html
+
+    - the ERB class helps turn ruby code into html
+
+    ERB.new("<%= 2 + 2 %>").result
+    => "4" 
+
+    -  “binding is a special core Ruby method, that packages up the local variables in an object and makes them available in another context”
+
+
+    def f
+      x = 4
+      binding
+    end
+
+    f.eval("x")
+    => 4
+
+
+    TOPIC:  reading and evaluating templates
+        write a render(template_name) method
+
+    -  need to create file path
+
+       File.join("hello","are","you","doin","today")
+       => "hello/are/you/doin/today"
+
+    -  we use the following to find the path to the template from the app dir
+
+       template_fname = File.join(
+         "views", self.class.name.underscore, "#{template_name}.html.erb"
+       )
+
+
+    -  self.class.name is an interesting piece of code
+
+       this controller we are creating will be inherited into our users/sessions/etc controller
+
+       then self will be an instance of whatever controller we are 
+
+
+    -  ActiveSupport#underscore converts from Camel to snake case
+
+       > "CreateUser".underscore
+       => "create_user"
+
+
+    -  Now that we have the template_path_and_filename
+       we can use File.read(“sampletext.txt”)
+       will put the entire template into one string with \n separating lines
+
+
+    -  we already built our render_content(content, type) method
+    it takes a content string of what you want to render, and a type for instance "text/html"
+
+    $ git commit -m "phase 3 done"
+    $ git checkout -b Phase-4-Adding-the-Session
+
+    TOPIC:  we are creating the session hash that is used as follows
+
+    def sign_in(user)
+      @current_user = user
+      session[:session_token] = user.reset_session_token!
+    end
+
+    -  “For the cookie value, we'll take a Ruby Hash and serialize it to JSON”
+
+    > require 'json'
+    > {cat: :blue}.to_json
+    => "{\"cat\":\"blue\"}"
+
+    -  the request contains cookies that can be accessed in the following manner
+
+       req.cookies
+
+    -  cookies contain an attribute name
+
+       > cookie.name
+       => “_chocolate_chip”
+
+    -  cookies contain an attribute value, that is already converted to json
+       
+       > require 'json'
+       > JSON.parse([1,2,3,4].to_json)
+       => [1, 2, 3, 4]
+
+    -  we need a way to store the data/value stored into the cookie as an instance variable inside the session object
+
+       “If this cookie has been set before, it should use JSON to deserialize the value and store this in an ivar; else it should store {}”
+
+       after we found the cookie with the proper name, we set @data to empty hash is cookie is nil, or we parse the value stored in the cookie if we find it
+
+       note: this works because the value in the cookie is a ruby hash converted to json
+
+    def initialize(req)
+      cookie = req.cookies.find {|x| x.name == "_rails_lite_app"  }
+      @data = cookie.nil? ? {} : JSON.parse(cookie.value) 
+    end
+
+
+
+    -  Also note that we want to assign session[:session_token]=(something) when we log in
+
+       and want to pull out the :session_token value to see if this request is coming from a user that is logged in
+
+
+    TODO:  “store_session(response) that will set a cookie named '_rails_lite_app', set the cookie's value to the JSON serialized content of the hash. Add the new cookie to response.cookies”
+
+
+    def store_session(res)
+      res.cookies << WEBrick::Cookie.new(
+        "_rails_lite_app",
+        @data.to_json
+      )
+    end
+
+
+    TODO: “Implement a method ControllerBase#session which parses the request and constructs a session from it. Cache this in an ivar, (@session; use ||=) that can be returned on subsequent calls to #session”
+
+
+    -  the server receives one request, that includes our cookies, we need to parse the value stored inside the cookie
+
+       we optimize this parsing by using the ||= operator so we only have to parse once then we can just use the instance variable @session
+
+    def session
+      @session ||= Session.new(@req)
+    end
+
+   
+    TODO: “Phase4::ControllerBase inherits from Phase3::ControllerBase. Override the #redirect_to and #render_content methods to (1) call the parent's method definition and (2) call Session#store_session”
+
+
+
+
+    def redirect_to(url)
+      super(url)
+      session.store_session(@res)
+
+      nil
+    end
+
+    def render_content(content, type)
+      super(content, type)
+      session.store_session(@res)
+
+      nil
+    end
+
+
+    -  Explanation of code:
+       
+       we see a similar pattern here of calling the inherited version of the method with super(), and then sending the response  variable to the store_session method of session, to put a cookie into the response
+
+    -  A couple of different scenarios can arise
+
+    -  (1) User just logged in, there is no cookie found, @data = {},  we call session[:session_token]
+
+       @data = {:session_token => (result of SecureRandom.urlsafe_base64(16))}
+
+       then our create action of the session controller says Hey! we are redirecting you to links page!
+
+       at the last minute our redirect function calls session.store_session(@res)
+
+       this will store the @data into a cookie
+
+       
+    -  (2) User has just logged out, therefore @data will be set to @data = {:sesion_token => nil}
+
+       because when never delete a cookie, just set the :session_token to nil
+    
+
+       
+
+
+
+
+    SECTION: Phase V: params, params, params!
+
+
+    - Params from “router’s match of url” / query string / request body
+
+    -  “parameters that are sent as part of the URL, called query string parameters. The query string is everything after "?" in the URL.“
+
+    -  “URL encoded form is like JSON, we need to parse it first. Check out the URI method URI::decode_www_form”
+
+
+    > require 'uri'
+    => true
+    > URI.decode_www_form("q=x")
+    => [["q", "x"]]
+
+
+
+    ——And we go on to complete params and program a lite routing code—
+
+
+
+
+
+
+
+helpful links:
+
+http://stackoverflow.com/questions/18397792/webrick-mount-proc
+
+http://apidock.com/rails/ActionController/Base/redirect_to
+
+http://stackoverflow.com/questions/8954706/render-an-erb-template-with-values-from-a-hash
+
+http://api.rubyonrails.org/classes/ActiveSupport/Inflector.html#method-i-underscore
+
+http://stackoverflow.com/questions/3183786/how-to-convert-a-ruby-hash-object-to-json
+
+http://guides.rubyonrails.org/action_controller_overview.html
+
+
+
+
+less helpful links:
+
+http://stackoverflow.com/questions/13227571/http-response-regarding-content-type
+
+http://www.mit.edu/faq/mimetypes.html
+
+
+
+
